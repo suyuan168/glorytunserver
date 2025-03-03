@@ -1,0 +1,29 @@
+omr-glorytun-tcp (0.0.35-6) unstable; urgency=medium
+
+  * Some changes for better MPTCP upstream support
+
+ -- OpenMPTCProuter <contact@openmptcprouter.com>  Fri, 11 Aug 2023 14:46:35 +0200
+
+omr-glorytun-tcp (0.0.35-5) unstable; urgency=medium
+
+  * Add and remove some logs
+
+ -- OpenMPTCProuter <contact@openmptcprouter.com>  Wed, 02 Aug 2023 19:33:22 +0200
+
+omr-glorytun-tcp (0.0.35-4) unstable; urgency=medium
+
+  * Add MPTCP upstream support
+
+ -- OpenMPTCProuter <contact@openmptcprouter.com>  Fri, 27 Mar 2021 20:21:14 +0200
+
+omr-glorytun-tcp (0.0.35-3) unstable; urgency=medium
+
+  * Update config
+
+ -- OpenMPTCProuter <contact@openmptcprouter.com>  Wed, 03 Mar 2020 15:09:11 +0000
+
+omr-glorytun-tcp (0.0.35-2) unstable; urgency=medium
+
+  * Package creation
+
+ -- OpenMPTCProuter <contact@openmptcprouter.com>  Fri, 28 Apr 2020 08:34:36 +0000

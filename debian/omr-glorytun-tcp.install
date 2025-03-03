@@ -1,0 +1,5 @@
+debian/tun0 etc/glorytun-tcp
+debian/post.sh etc/glorytun-tcp
+debian/*.service lib/systemd/system
+debian/glorytun-tcp-run usr/bin
+glorytun-tcp usr/bin

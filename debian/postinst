@@ -1,0 +1,34 @@
+#!/bin/sh -e
+
+test $DEBIAN_SCRIPT_DEBUG && set -v -x
+
+action="$1"
+oldversion="$2"
+
+umask 022
+GLORYTUN_PASS=${GLORYTUN_PASS:-$(od  -vN "32" -An -tx1 /dev/urandom | tr '[:lower:]' '[:upper:]' | tr -d " \n")}
+# use debconf
+. /usr/share/debconf/confmodule
+
+if [ ! -f "/etc/glorytun-tcp/tun0.key" ]; then
+	if [ ! -f "/etc/glorytun-udp/tun0.key" ]; then
+		echo "$GLORYTUN_PASS" > /etc/glorytun-tcp/tun0.key
+	else
+		cp /etc/glorytun-udp/tun0.key /etc/glorytun-tcp/tun0.key
+	fi
+fi
+
+if ! grep -q tun /etc/modules ; then
+	echo tun >> /etc/modules
+fi
+
+systemctl enable glorytun-tcp@tun0.service
+systemctl restart glorytun-tcp@tun0.service
+systemctl enable systemd-networkd.service
+
+
+db_stop
+
+#DEBHELPER#
+exit 0
+# vim:set ai et sts=2 sw=2 tw=0:
