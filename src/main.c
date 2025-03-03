@@ -83,9 +83,9 @@ struct crypto_ctx {
 _pure_
 static int64_t dt_ms (struct timeval *ta, struct timeval *tb)
 {
-    const int64_t s = ta->tv_sec-tb->tv_sec;
-    const int64_t n = ta->tv_usec-tb->tv_usec;
-    return s*1000LL+n/1000LL;
+    const int64_t s = ta->tv_sec - tb->tv_sec;
+    const int64_t n = ta->tv_usec - tb->tv_usec;
+    return s * 1000LL + n / 1000LL;
 }
 
 static void fd_set_nonblock (int fd)
@@ -94,15 +94,15 @@ static void fd_set_nonblock (int fd)
 
     do {
         ret = fcntl(fd, F_GETFL, 0);
-    } while (ret==-1 && errno==EINTR);
+    } while (ret == -1 && errno == EINTR);
 
-    int flags = (ret==-1)?0:ret;
+    int flags = (ret == -1) ? 0 : ret;
 
     do {
-        ret = fcntl(fd, F_SETFL, flags|O_NONBLOCK);
-    } while (ret==-1 && errno==EINTR);
+        ret = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    } while (ret == -1 && errno == EINTR);
 
-    if (ret==-1)
+    if (ret == -1)
         perror("fcntl O_NONBLOCK");
 }
 
@@ -124,7 +124,7 @@ enum sk_opt {
 
 static int sk_set (int fd, enum sk_opt opt, const void *val, socklen_t len)
 {
-    if (!val || len<=0) {
+    if (!val || len <= 0) {
         errno = EINVAL;
         return -1;
     }
@@ -190,7 +190,7 @@ static int sk_set (int fd, enum sk_opt opt, const void *val, socklen_t len)
 
     int ret = setsockopt(fd, opts[opt].level, opts[opt].option, val, len);
 
-    if (ret==-1) {
+    if (ret == -1) {
         int err = errno;
         gt_log("couldn't set socket option `%s'\n", opts[opt].name);
         errno = err;
@@ -206,7 +206,7 @@ static int sk_set_int (int fd, enum sk_opt opt, int val)
 
 static void sk_set_mptcp (int fd)
 {
-    if (sk_set_int(fd, sk_mptcp_42, 1)==-1)
+    if (sk_set_int(fd, sk_mptcp_42, 1) == -1)
         sk_set_int(fd, sk_mptcp_26, 1);
 }
 
@@ -217,18 +217,18 @@ static int sk_listen (int fd, struct addrinfo *ai)
     if (gt.mptcp)
         sk_set_mptcp(fd);
 
-    if (bind(fd, ai->ai_addr, ai->ai_addrlen)==-1) {
+    if (bind(fd, ai->ai_addr, ai->ai_addrlen) == -1) {
         perror("bind");
         return -1;
     }
 
-    if (listen(fd, 8)==-1) {
+    if (listen(fd, 8) == -1) {
         perror("listen");
         return -1;
     }
 
 #ifdef __linux__
-    sk_set_int(fd, sk_defer_accept, gt.timeout/1000);
+    sk_set_int(fd, sk_defer_accept, gt.timeout / 1000);
 #else
     char data[256] = "dataready";
     sk_set(fd, sk_acceptfilter, &data, sizeof(data));
@@ -246,11 +246,11 @@ static int sk_connect (int fd, struct addrinfo *ai)
 
     int ret = connect(fd, ai->ai_addr, ai->ai_addrlen);
 
-    if (ret==-1) {
-        if (errno==EINTR)
+    if (ret == -1) {
+        if (errno == EINTR)
             return 0;
 
-        if (errno==EINPROGRESS) {
+        if (errno == EINPROGRESS) {
             struct pollfd pollfd = {
                 .fd = fd,
                 .events = POLLOUT,
@@ -276,13 +276,13 @@ static int sk_connect (int fd, struct addrinfo *ai)
 
 static int sk_create (struct addrinfo *res, int(*func)(int, struct addrinfo *))
 {
-    for (struct addrinfo *ai=res; ai; ai=ai->ai_next) {
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         int fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 
-        if (fd==-1)
+        if (fd == -1)
             continue;
 
-        if (func(fd, ai)!=-1)
+        if (func(fd, ai) != -1)
             return fd;
 
         close(fd);
@@ -298,8 +298,8 @@ static int sk_accept (int fd)
 
     int ret = accept(fd, (struct sockaddr *)&addr, &addr_size);
 
-    if (ret==-1) {
-        if (errno!=EINTR)
+    if (ret == -1) {
+        if (errno != EINTR)
             perror("accept");
         return -1;
     }
@@ -314,7 +314,7 @@ static char *sk_get_name (int fd)
     struct sockaddr_storage addr;
     socklen_t addr_size = sizeof(addr);
 
-    if (getpeername(fd, (struct sockaddr *)&addr, &addr_size)==-1) {
+    if (getpeername(fd, (struct sockaddr *)&addr, &addr_size) == -1) {
         perror("getpeername");
         return NULL;
     }
@@ -325,7 +325,7 @@ static char *sk_get_name (int fd)
     int ret = getnameinfo((struct sockaddr *)&addr, addr_size,
             host, sizeof(host),
             port, sizeof(port),
-            NI_NUMERICHOST|NI_NUMERICSERV);
+            NI_NUMERICHOST | NI_NUMERICSERV);
 
     switch (ret) {
     case 0:
@@ -377,7 +377,7 @@ static struct addrinfo *ai_create (const char *host, const char *port, int liste
         gt_log("the name server returned a failure\n");
         break;
     default:
-        gt_log("%s.%s is not valid\n", host?:"", port);
+        gt_log("%s.%s is not valid\n", host ? : "", port);
     }
 
     return NULL;
@@ -406,25 +406,25 @@ static void gt_set_signal (void)
     sigemptyset(&sa.sa_mask);
 
     sa.sa_handler = gt_sa_handler;
-    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGUSR1, &sa, NULL);
 
     sa.sa_handler = SIG_IGN;
-    sigaction(SIGHUP,  &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
 }
 
 static ssize_t fd_read (int fd, void *data, size_t size)
 {
-    if ((fd==-1) || !size)
+    if ((fd == -1) || !size)
         return -1;
 
     ssize_t ret = read(fd, data, size);
 
-    if (ret==-1) {
-        if (errno==EAGAIN || errno==EINTR)
+    if (ret == -1) {
+        if (errno == EAGAIN || errno == EINTR)
             return -1;
 
         if (errno)
@@ -438,16 +438,16 @@ static ssize_t fd_read (int fd, void *data, size_t size)
 
 static ssize_t fd_write (int fd, const void *data, size_t size)
 {
-    if ((fd==-1) || !size)
+    if ((fd == -1) || !size)
         return -1;
 
     ssize_t ret = write(fd, data, size);
 
-    if (ret==-1) {
-        if (errno==EAGAIN || errno==EINTR)
+    if (ret == -1) {
+        if (errno == EAGAIN || errno == EINTR)
             return -1;
 
-        if (errno==EPIPE || errno==ECONNRESET)
+        if (errno == EPIPE || errno == ECONNRESET)
             return 0;
 
         if (errno)
@@ -463,13 +463,13 @@ static size_t fd_read_all (int fd, void *data, size_t size)
 {
     size_t done = 0;
 
-    while (done<size) {
-        ssize_t ret = fd_read(fd, (uint8_t *)data+done, size-done);
+    while (done < size) {
+        ssize_t ret = fd_read(fd, (uint8_t *)data + done, size - done);
 
         if (!ret)
             break;
 
-        if (ret<0) {
+        if (ret < 0) {
             struct pollfd pollfd = {
                 .fd = fd,
                 .events = POLLIN,
@@ -491,13 +491,13 @@ static size_t fd_write_all (int fd, const void *data, size_t size)
 {
     size_t done = 0;
 
-    while (done<size) {
-        ssize_t ret = fd_write(fd, (const uint8_t *)data+done, size-done);
+    while (done < size) {
+        ssize_t ret = fd_write(fd, (const uint8_t *)data + done, size - done);
 
         if (!ret)
             break;
 
-        if (ret<0) {
+        if (ret < 0) {
             struct pollfd pollfd = {
                 .fd = fd,
                 .events = POLLOUT,
@@ -1188,8 +1188,9 @@ static int gt_setup_crypto (struct crypto_ctx *ctx, int fd, int listener)
         memcpy(ctx->read.key, key_r, sizeof(key_r));
         memcpy(ctx->write.key, key_w, sizeof(key_w));
     } else {
-        crypto_aead_aes256gcm_beforenm(&ctx->read.key, key_r);
-        crypto_aead_aes256gcm_beforenm(&ctx->write.key, key_w);
+        /* 修改处：直接拷贝 key_r 到 ctx->read.key，不调用 crypto_aead_aes256gcm_beforenm */
+        memcpy(ctx->read.key, key_r, sizeof(key_r));
+        memcpy(ctx->write.key, key_w, sizeof(key_w));
     }
 
     sodium_memzero(secret, sizeof(secret));
@@ -1265,4 +1266,361 @@ int main (int argc, char **argv)
         { NULL },
     };
 
-    if (option(opts, argc,
+    if (option(opts, argc, argv))
+        return 1;
+
+    if (option_is_set(opts, "version")) {
+        gt_print(PACKAGE_STRING "\n");
+        return 0;
+    }
+
+    const int listener = option_is_set(opts, "listener");
+    const int delay = option_is_set(opts, "delay");
+    const int keepalive = option_is_set(opts, "keepalive");
+    const int noquickack = option_is_set(opts, "noquickack");
+    const int debug = option_is_set(opts, "debug");
+
+    int chacha = option_is_set(opts, "chacha20");
+
+    gt.mptcp = option_is_set(opts, "mptcp");
+
+    if (sodium_init() == -1) {
+        gt_log("libsodium initialization has failed\n");
+        return 1;
+    }
+
+    if (!chacha && !crypto_aead_aes256gcm_is_available()) {
+        gt_na("AES-256-GCM");
+        chacha = 1;
+    }
+
+    if (option_is_set(opts, "bench")) {
+        gt_bench(chacha);
+        return 0;
+    }
+
+    if (buffer_size < GT_PKT_MAX) {
+        buffer_size = GT_PKT_MAX;
+        gt_log("buffer size must be greater than or equal to %li\n", buffer_size);
+    }
+
+    if (!listener) {
+        if (!option_is_set(opts, "keyfile")) {
+            gt_log("keyfile option must be set\n");
+            return 1;
+        }
+
+        if (!option_is_set(opts, "retry"))
+            retry_count = 0;
+    }
+
+    if (gt.timeout <= 0 || gt.timeout > INT_MAX) {
+        gt_log("bad timeout\n");
+        return 1;
+    }
+
+    struct addrinfo *ai = ai_create(host, port, listener);
+
+    if (!ai)
+        return 1;
+
+    gt.state_fd = state_create(statefile);
+
+    if (statefile && gt.state_fd == -1)
+        return 1;
+
+    struct fdbuf tun  = { .fd = -1 };
+    struct fdbuf sock = { .fd = -1 };
+
+    char *tun_name = NULL;
+
+    tun.fd = tun_create(dev, &tun_name, option_is_set(opts, "multiqueue"));
+
+    if (tun.fd == -1) {
+        gt_log("couldn't create tun device\n");
+        return 1;
+    }
+
+    fd_set_nonblock(tun.fd);
+
+    buffer_setup(&tun.write, NULL, GT_TUNW_SIZE);
+    buffer_setup(&tun.read,  NULL, GT_TUNR_SIZE);
+
+    buffer_setup(&sock.write, NULL, buffer_size);
+    buffer_setup(&sock.read,  NULL, buffer_size);
+
+    int fd = -1;
+    if (gt.mptcp)
+        ai->ai_protocol = IPPROTO_MPTCP;
+
+    if (listener) {
+        fd = sk_create(ai, sk_listen);
+
+        if (fd == -1)
+            return 1;
+    }
+
+    struct crypto_ctx ctx;
+
+    if (gt_setup_secretkey(&ctx, keyfile))
+        return 1;
+
+    long retry = 0;
+    uint8_t *db = NULL;
+
+    state_send(gt.state_fd, "INITIALIZED", tun_name);
+
+    while (!gt.quit) {
+        if (retry_count >= 0 && retry >= retry_count + 1) {
+            gt_log("couldn't %s (%d attempt%s)\n", listener ? "listen" : "connect",
+                   (int)retry, (retry > 1) ? "s" : "");
+            break;
+        }
+
+        if (retry_slope || retry_const) {
+            long usec = retry * retry_slope + retry_const;
+
+            if (usec > retry_limit)
+                usec = retry_limit;
+
+            if (usec > 0 && usleep(usec) == -1 && errno == EINVAL)
+                sleep(usec / 1000000);
+        }
+
+        if (retry < LONG_MAX)
+            retry++;
+
+        sock.fd = listener ? sk_accept(fd) : sk_create(ai, sk_connect);
+
+        if (sock.fd == -1)
+            continue;
+
+        char *sockname = sk_get_name(sock.fd);
+
+        if (str_empty(sockname)) {
+            close(sock.fd);
+            continue;
+        }
+
+        gt_log("%s: connected\n", sockname);
+
+        sk_set_int(sock.fd, sk_nodelay, !delay);
+        sk_set_int(sock.fd, sk_keepalive, keepalive);
+
+        if (keepalive) {
+            if (ka_count >= 0 && ka_count <= INT_MAX)
+                sk_set_int(sock.fd, sk_keepcnt, ka_count);
+
+            if (ka_idle >= 0 && ka_idle <= INT_MAX)
+                sk_set_int(sock.fd, sk_keepidle, ka_idle);
+
+            if (ka_interval >= 0 && ka_interval <= INT_MAX)
+                sk_set_int(sock.fd, sk_keepintvl, ka_interval);
+        }
+
+        sk_set_int(sock.fd, sk_user_timeout, gt.timeout);
+        sk_set(sock.fd, sk_congestion, congestion, str_len(congestion));
+
+        ctx.chacha = chacha;
+
+        if (gt_setup_crypto(&ctx, sock.fd, listener)) {
+            gt_log("%s: key exchange failed\n", sockname);
+            goto restart;
+        }
+
+        retry = 0;
+
+        state_send(gt.state_fd, "STARTED", tun_name);
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+
+        int stop_loop = 0;
+
+        buffer_format(&sock.write);
+        buffer_format(&sock.read);
+
+        while (1) {
+            if _0_(gt.quit)
+                stop_loop |= 1;
+
+            if _0_(stop_loop) {
+                if (((stop_loop & (1 << 2)) || !buffer_read_size(&sock.write)) &&
+                    ((stop_loop & (1 << 1)) || !buffer_read_size(&sock.read)))
+                    goto restart;
+                FD_CLR(tun.fd, &rfds);
+            } else {
+                buffer_shift(&tun.read);
+
+                if (buffer_write_size(&tun.read) >= GT_MTU_MAX) {
+                    FD_SET(tun.fd, &rfds);
+                } else {
+                    FD_CLR(tun.fd, &rfds);
+                }
+            }
+
+            buffer_shift(&sock.read);
+
+            if (buffer_write_size(&sock.read)) {
+                FD_SET(sock.fd, &rfds);
+            } else {
+                FD_CLR(sock.fd, &rfds);
+            }
+
+            struct timeval timeout = {
+                .tv_usec = 100000,
+            };
+
+            if (buffer_read_size(&sock.write))
+                timeout.tv_usec = 1000;
+
+            if _0_(select(sock.fd + 1, &rfds, NULL, NULL, &timeout) == -1) {
+                if (errno == EINTR)
+                    continue;
+                perror("select");
+                return 1;
+            }
+
+            /* 从 tun 设备读取数据 */
+            if (FD_ISSET(tun.fd, &rfds)) {
+                while (1) {
+                    const size_t size = buffer_write_size(&tun.read);
+
+                    if (size < GT_MTU_MAX)
+                        break;
+
+                    const ssize_t r = tun_read(tun.fd, tun.read.write, GT_MTU_MAX);
+
+                    if (r <= 0) {
+                        gt.quit |= !r;
+                        break;
+                    }
+
+                    struct ip_common ic;
+
+                    if (ip_get_common(&ic, tun.read.write, GT_MTU_MAX))
+                        continue;
+
+                    if _0_(ic.size != r) {
+                        char tmp[2 * GT_MTU_MAX + 1];
+                        gt_tohex(tmp, sizeof(tmp), tun.read.write, r);
+                        gt_log("%s: DUMP %zi %s\n", sockname, r, tmp);
+                        continue;
+                    }
+
+                    if _0_(debug) {
+                        if (gt_track(&db, &ic, tun.read.write, 0))
+                            continue;
+                    }
+
+                    tun.read.write += r;
+                }
+            }
+
+            buffer_shift(&sock.write);
+
+            /* 服务端采用明文模式：直接将 tun.read 数据拷贝到 sock.write，不调用加解密函数 */
+            {
+                size_t r = buffer_read_size(&tun.read);
+                if (r && buffer_write_size(&sock.write) >= r) {
+                    memcpy(sock.write.write, tun.read.read, r);
+                    sock.write.write += r;
+                    tun.read.read += r;
+                }
+            }
+
+            if (buffer_read_size(&sock.write)) {
+                const ssize_t r = fd_write(sock.fd, sock.write.read,
+                                           buffer_read_size(&sock.write));
+
+                if (r > 0) {
+                    sock.write.read += r;
+                } else if (!r) {
+                    stop_loop |= (1 << 2);
+                }
+            }
+
+            if _0_(stop_loop && !buffer_read_size(&sock.write)) {
+                if (!(stop_loop & (1 << 2))) {
+                    stop_loop |= (1 << 2);
+                    shutdown(sock.fd, SHUT_WR);
+                    gt_log("%s: shutdown\n", sockname);
+                }
+            }
+
+            if (FD_ISSET(sock.fd, &rfds)) {
+                if (noquickack)
+                    sk_set_int(sock.fd, sk_quickack, 0);
+
+                const ssize_t r = fd_read(sock.fd, sock.read.write,
+                                          buffer_write_size(&sock.read));
+
+                if (r > 0) {
+                    sock.read.write += r;
+                } else if (!r) {
+                    stop_loop |= (1 << 1);
+                }
+            }
+
+            buffer_shift(&tun.write);
+
+            /* 服务端明文模式，不调用 gt_decrypt，直接跳过解密 */
+            /* 原本解密代码已注释掉 */
+            ;
+            
+            while (1) {
+                size_t size = buffer_read_size(&tun.write);
+
+                if (!size)
+                    break;
+
+                struct ip_common ic;
+
+                if (ip_get_common(&ic, tun.write.read, size) || ic.size > size) {
+                    gt_log("%s: bad packet!\n", sockname);
+                    goto restart;
+                }
+
+                if _0_(debug) {
+                    if (gt_track(&db, &ic, tun.write.read, 1)) {
+                        tun.write.read += ic.size;
+                        continue;
+                    }
+                }
+
+                ssize_t r = tun_write(tun.fd, tun.write.read, ic.size);
+
+                if (r > 0) {
+                    if (r == ic.size)
+                        tun.write.read += r;
+                } else {
+                    gt.quit |= !r;
+                    break;
+                }
+            }
+        }
+
+    restart:
+        if (sock.fd != -1) {
+            close(sock.fd);
+            sock.fd = -1;
+        }
+
+        state_send(gt.state_fd, "STOPPED", tun_name);
+
+        if (sockname) {
+            free(sockname);
+            sockname = NULL;
+        }
+    }
+
+    freeaddrinfo(ai);
+
+    free(sock.write.data);
+    free(sock.read.data);
+
+    free(tun.write.data);
+    free(tun.read.data);
+
+    return 0;
+}
