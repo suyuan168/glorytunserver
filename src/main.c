@@ -515,6 +515,9 @@ static size_t fd_write_all (int fd, const void *data, size_t size)
     return done;
 }
 
+/* 修改后的 gt_encrypt：采用明文传输模式，
+   写入2字节长度头后直接复制数据，不进行加密。
+   原先的 GT_ABYTES 不再增加。 */
 static int gt_encrypt (struct crypto_ctx *ctx, buffer_t *dst, buffer_t *src)
 {
     const size_t rs = buffer_read_size(src);
@@ -523,40 +526,23 @@ static int gt_encrypt (struct crypto_ctx *ctx, buffer_t *dst, buffer_t *src)
     if (!rs || !ws)
         return 0;
 
-    const size_t size = rs+GT_ABYTES;
-
-    if (size+2>ws)
+    const size_t size = rs;  /* 明文数据长度 */
+    if (size + 2 > ws)
         return 0;
 
-    dst->write[0] = 0xFF&(size>>8);
-    dst->write[1] = 0xFF&(size);
+    dst->write[0] = 0xFF & (size >> 8);
+    dst->write[1] = 0xFF & (size);
 
-    if (ctx->chacha) {
-        crypto_aead_chacha20poly1305_encrypt(
-                dst->write+2, NULL,
-                src->read, rs,
-                dst->write, 2,
-                NULL, ctx->write.nonce,
-                ctx->write.key);
-
-        sodium_increment(ctx->write.nonce, crypto_aead_chacha20poly1305_NPUBBYTES);
-    } else {
-        crypto_aead_aes256gcm_encrypt_afternm(
-                dst->write+2, NULL,
-                src->read, rs,
-                dst->write, 2,
-                NULL, ctx->write.nonce,
-                (const crypto_aead_aes256gcm_state *)ctx->write.key);
-
-        sodium_increment(ctx->write.nonce, crypto_aead_aes256gcm_NPUBBYTES);
-    }
+    memcpy(dst->write + 2, src->read, rs);
 
     src->read += rs;
-    dst->write += size+2;
+    dst->write += size + 2;
 
     return 0;
 }
 
+/* 修改后的 gt_decrypt：采用明文传输模式，
+   根据2字节长度头直接复制数据，不进行解密 */
 static int gt_decrypt (struct crypto_ctx *ctx, buffer_t *dst, buffer_t *src)
 {
     const size_t rs = buffer_read_size(src);
@@ -565,43 +551,20 @@ static int gt_decrypt (struct crypto_ctx *ctx, buffer_t *dst, buffer_t *src)
     if (!rs || !ws)
         return 0;
 
-    if (rs<=2+GT_ABYTES)
+    if (rs < 2)
         return 0;
 
-    const size_t size = (src->read[0]<<8)|src->read[1];
+    const size_t size = (src->read[0] << 8) | src->read[1];
 
-    if (size-GT_ABYTES>ws)
+    if (size > ws)
+        return 0;
+    if (size + 2 > rs)
         return 0;
 
-    if (size+2>rs)
-        return 0;
+    memcpy(dst->write, src->read + 2, size);
 
-    if (ctx->chacha) {
-        if (crypto_aead_chacha20poly1305_decrypt(
-                    dst->write, NULL,
-                    NULL,
-                    src->read+2, size,
-                    src->read, 2,
-                    ctx->read.nonce,
-                    ctx->read.key))
-            return -1;
-
-        sodium_increment(ctx->read.nonce, crypto_aead_chacha20poly1305_NPUBBYTES);
-    } else {
-        if (crypto_aead_aes256gcm_decrypt_afternm(
-                    dst->write, NULL,
-                    NULL,
-                    src->read+2, size,
-                    src->read, 2,
-                    ctx->read.nonce,
-                    (const crypto_aead_aes256gcm_state *)ctx->read.key))
-            return -1;
-
-        sodium_increment(ctx->read.nonce, crypto_aead_aes256gcm_NPUBBYTES);
-    }
-
-    src->read += size+2;
-    dst->write += size-GT_ABYTES;
+    src->read += size + 2;
+    dst->write += size;
 
     return 0;
 }
@@ -609,13 +572,13 @@ static int gt_decrypt (struct crypto_ctx *ctx, buffer_t *dst, buffer_t *src)
 _pure_
 static inline uint32_t sum16 (uint32_t sum, const uint8_t *data, const size_t size)
 {
-    const size_t lim = size&~1u;
+    const size_t lim = size & ~1u;
 
-    for (size_t i=0; i<lim; i+=2)
-        sum += (data[i]<<8)|data[i+1];
+    for (size_t i = 0; i < lim; i += 2)
+        sum += (data[i] << 8) | data[i + 1];
 
-    if (size&1)
-        sum += data[size-1]<<8;
+    if (size & 1)
+        sum += data[size - 1] << 8;
 
     return sum;
 }
@@ -623,8 +586,8 @@ static inline uint32_t sum16 (uint32_t sum, const uint8_t *data, const size_t si
 _const_
 static inline uint16_t sum16_final (uint32_t sum)
 {
-    sum = (sum>>16)+(sum&0xFFFF);
-    return ~(sum+(sum>>16));
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    return ~(sum + (sum >> 16));
 }
 
 struct seq_elem {
@@ -655,11 +618,11 @@ void tcp_entry_free (struct tcp_entry *te)
 
 void sa_insert_elem (struct seq_array *sa, uint32_t i, uint32_t seq, uint32_t size)
 {
-    if (sa->count<i)
+    if (sa->count < i)
         return;
 
-    if (!(sa->count&7)) {
-        struct seq_elem *tmp = realloc(sa->elem, (sa->count+8)*sizeof(struct seq_elem));
+    if (!(sa->count & 7)) {
+        struct seq_elem *tmp = realloc(sa->elem, (sa->count + 8) * sizeof(struct seq_elem));
 
         if (!tmp) {
             gt_log("couldn't realloc!\n");
@@ -669,7 +632,7 @@ void sa_insert_elem (struct seq_array *sa, uint32_t i, uint32_t seq, uint32_t si
         sa->elem = tmp;
     }
 
-    memmove(&sa->elem[i+1], &sa->elem[i], (sa->count-i)*sizeof(struct seq_elem));
+    memmove(&sa->elem[i + 1], &sa->elem[i], (sa->count - i) * sizeof(struct seq_elem));
 
     sa->elem[i].seq = seq;
     sa->elem[i].size = size;
@@ -678,34 +641,34 @@ void sa_insert_elem (struct seq_array *sa, uint32_t i, uint32_t seq, uint32_t si
 
 void sa_remove_elem (struct seq_array *sa, uint32_t i)
 {
-    if (sa->count<i+1)
+    if (sa->count < i + 1)
         return;
 
     sa->count--;
 
-    memmove(&sa->elem[i], &sa->elem[i+1], (sa->count-i)*sizeof(struct seq_elem));
+    memmove(&sa->elem[i], &sa->elem[i + 1], (sa->count - i) * sizeof(struct seq_elem));
 }
 
 int sa_have (struct seq_array *sa, uint32_t seq, uint32_t size)
 {
     uint32_t i;
-    uint32_t seqa = seq-sa->base;
+    uint32_t seqa = seq - sa->base;
 
-    for (i=0; i<sa->count; i++) {
-        uint32_t seqb = sa->elem[i].seq-sa->base;
+    for (i = 0; i < sa->count; i++) {
+        uint32_t seqb = sa->elem[i].seq - sa->base;
 
-        if (seqb>=seqa) {
-            uint32_t d = seqb-seqa;
+        if (seqb >= seqa) {
+            uint32_t d = seqb - seqa;
 
-            if (d>size)
+            if (d > size)
                 return 0;
         } else {
-            uint32_t d = seqa-seqb;
+            uint32_t d = seqa - seqb;
 
-            if (d>=sa->elem[i].size)
+            if (d >= sa->elem[i].size)
                 continue;
 
-            if (d+size>sa->elem[i].size) {
+            if (d + size > sa->elem[i].size) {
                 gt_print("sa_have:part\n");
                 return 0; // XXX 0
             }
@@ -722,15 +685,15 @@ void sa_rebase (struct seq_array *sa, uint32_t seq)
     if (!sa->count)
         return;
 
-    if (seq==sa->base)
+    if (seq == sa->base)
         return;
 
-    uint32_t size = seq-sa->elem[0].seq;
+    uint32_t size = seq - sa->elem[0].seq;
 
-    if (size==sa->elem[0].size) {
+    if (size == sa->elem[0].size) {
         sa_remove_elem(sa, 0);
     } else {
-        if (size>sa->elem[0].size)
+        if (size > sa->elem[0].size)
             return;
         sa->elem[0].seq = seq;
         sa->elem[0].size -= size;
@@ -742,42 +705,42 @@ void sa_rebase (struct seq_array *sa, uint32_t seq)
 void sa_insert (struct seq_array *sa, uint32_t seq, uint32_t size)
 {
     uint32_t i;
-    uint32_t seqa = seq-sa->base;
+    uint32_t seqa = seq - sa->base;
 
-    for (i=0; i<sa->count; i++) {
-        uint32_t seqb = sa->elem[i].seq-sa->base;
+    for (i = 0; i < sa->count; i++) {
+        uint32_t seqb = sa->elem[i].seq - sa->base;
 
-        if (seqb>=seqa) {
-            uint32_t d = seqb-seqa;
+        if (seqb >= seqa) {
+            uint32_t d = seqb - seqa;
 
-            if (d>size)
+            if (d > size)
                 break;
 
             sa->elem[i].seq = seq;
 
-            uint32_t new_size = sa->elem[i].size+d;
+            uint32_t new_size = sa->elem[i].size + d;
 
-            if (new_size>size) {
+            if (new_size > size) {
                 sa->elem[i].size = new_size;
             } else {
                 sa->elem[i].size = size;
             }
         } else {
-            uint32_t d = seqa-seqb;
+            uint32_t d = seqa - seqb;
 
-            if (d>sa->elem[i].size)
+            if (d > sa->elem[i].size)
                 continue;
 
-            uint32_t new_size = size+d;
+            uint32_t new_size = size + d;
 
-            if (new_size>sa->elem[i].size)
+            if (new_size > sa->elem[i].size)
                 sa->elem[i].size = new_size;
         }
 
-        if (i+1<sa->count) {
-            if (seqb+sa->elem[i].size==sa->elem[i+1].seq-sa->base) {
-                sa->elem[i].size += sa->elem[i+1].size;
-                sa_remove_elem(sa, i+1);
+        if (i + 1 < sa->count) {
+            if (seqb + sa->elem[i].size == sa->elem[i + 1].seq - sa->base) {
+                sa->elem[i].size += sa->elem[i + 1].size;
+                sa_remove_elem(sa, i + 1);
             }
         }
 
@@ -804,7 +767,7 @@ static int tcp_entry_set_key (struct tcp_entry *te, struct ip_common *ic, uint8_
     }
 
     memcpy(&key[size], &data[ic->hdr_size], 4);
-    te->key[0] = size+4;
+    te->key[0] = size + 4;
 
     return 0;
 }
@@ -817,19 +780,19 @@ static int tcp_entry_set_key_rev (struct tcp_entry *te, struct ip_common *ic, ui
     switch (ic->version) {
     case 4:
         size = 8;
-        memcpy(key, &data[12+4], 4);
-        memcpy(key+4, &data[12], 4);
+        memcpy(key, &data[12 + 4], 4);
+        memcpy(key + 4, &data[12], 4);
         break;
     case 6:
         size = 32;
-        memcpy(key, &data[9+16], 16);
-        memcpy(key+16, &data[9], 16);
+        memcpy(key, &data[9 + 16], 16);
+        memcpy(key + 16, &data[9], 16);
         break;
     }
 
-    memcpy(&key[size], &data[ic->hdr_size+2], 2);
-    memcpy(&key[size+2], &data[ic->hdr_size], 2);
-    te->key[0] = size+4;
+    memcpy(&key[size], &data[ic->hdr_size + 2], 2);
+    memcpy(&key[size + 2], &data[ic->hdr_size], 2);
+    te->key[0] = size + 4;
 
     return 0;
 }
@@ -846,17 +809,17 @@ static void gt_print_entry (struct tcp_entry *te)
     uint16_t port1 = 0;
 
     switch (size) {
-    case 8+4:
+    case 8 + 4:
         inet_ntop(AF_INET, key, ip0, sizeof(ip0));
-        inet_ntop(AF_INET, key+4, ip1, sizeof(ip1));
-        port0 = (key[8]<<8)|key[9];
-        port1 = (key[10]<<8)|key[11];
+        inet_ntop(AF_INET, key + 4, ip1, sizeof(ip1));
+        port0 = (key[8] << 8) | key[9];
+        port1 = (key[10] << 8) | key[11];
         break;
-    case 32+4:
-        inet_ntop(AF_INET6, key,  ip0, sizeof(ip0));
-        inet_ntop(AF_INET6, key+16, ip1, sizeof(ip1));
-        port0 = (key[32]<<8)|key[33];
-        port1 = (key[34]<<8)|key[35];
+    case 32 + 4:
+        inet_ntop(AF_INET6, key, ip0, sizeof(ip0));
+        inet_ntop(AF_INET6, key + 16, ip1, sizeof(ip1));
+        port0 = (key[32] << 8) | key[33];
+        port1 = (key[34] << 8) | key[35];
         break;
     }
 
@@ -872,7 +835,7 @@ static void gt_print_hdr (struct ip_common *ic, uint8_t *data)
     if (!ic->hdr_size)
         return;
 
-    uint32_t sum = ic->proto+ic->size-ic->hdr_size;
+    uint32_t sum = ic->proto + ic->size - ic->hdr_size;
 
     char ip_src[INET6_ADDRSTRLEN];
     char ip_dst[INET6_ADDRSTRLEN];
@@ -881,18 +844,18 @@ static void gt_print_hdr (struct ip_common *ic, uint8_t *data)
     case 4:
         inet_ntop(AF_INET, &data[12], ip_src, sizeof(ip_src));
         inet_ntop(AF_INET, &data[16], ip_dst, sizeof(ip_dst));
-        sum = sum16(sum, &data[12], 2*4);
+        sum = sum16(sum, &data[12], 2 * 4);
         break;
     case 6:
-        inet_ntop(AF_INET6, &data[9],  ip_src, sizeof(ip_src));
+        inet_ntop(AF_INET6, &data[9], ip_src, sizeof(ip_src));
         inet_ntop(AF_INET6, &data[25], ip_dst, sizeof(ip_dst));
-        sum = sum16(sum, &data[9], 2*16); // XXX
+        sum = sum16(sum, &data[9], 2 * 16); // XXX
         break;
     }
 
     uint8_t *const packet = &data[ic->hdr_size];
 
-    if (ic->proto==IPPROTO_TCP || ic->proto==IPPROTO_MPTCP) {
+    if (ic->proto == IPPROTO_TCP || ic->proto == IPPROTO_MPTCP) {
         struct tcphdr tcp;
 
         memcpy(&tcp, packet, sizeof(tcp));
@@ -901,7 +864,7 @@ static void gt_print_hdr (struct ip_common *ic, uint8_t *data)
         tcp.th_sum = 0;
 
         sum = sum16(sum, (uint8_t *)&tcp, sizeof(tcp));
-        sum = sum16(sum, &packet[sizeof(tcp)], ic->size-ic->hdr_size-sizeof(tcp));
+        sum = sum16(sum, &packet[sizeof(tcp)], ic->size - ic->hdr_size - sizeof(tcp));
         uint16_t computed_sum = sum16_final(sum);
 
         tcp.th_sport = ntohs(tcp.th_sport);
@@ -911,17 +874,17 @@ static void gt_print_hdr (struct ip_common *ic, uint8_t *data)
         tcp.th_win = ntohs(tcp.th_win);
 
         gt_print("proto:%hhu\tsrc:%s.%u\tdst:%s.%u\tseq:%u\tack:%u\twin:%u\tsize:%u\tflags:%c%c%c%c%c%c\tsum:%i\n",
-                ic->proto, ip_src, tcp.th_sport, ip_dst, tcp.th_dport,
-                tcp.th_seq, tcp.th_ack, tcp.th_win, ic->size-ic->hdr_size-tcp.th_off*4,
-                (tcp.th_flags&TH_FIN) ?'F':'.',
-                (tcp.th_flags&TH_SYN) ?'S':'.',
-                (tcp.th_flags&TH_RST) ?'R':'.',
-                (tcp.th_flags&TH_PUSH)?'P':'.',
-                (tcp.th_flags&TH_ACK) ?'A':'.',
-                (tcp.th_flags&TH_URG) ?'U':'.',
-                (computed_sum==tcp_sum));
+                 ic->proto, ip_src, tcp.th_sport, ip_dst, tcp.th_dport,
+                 tcp.th_seq, tcp.th_ack, tcp.th_win, ic->size - ic->hdr_size - tcp.th_off * 4,
+                 (tcp.th_flags & TH_FIN) ? 'F' : '.',
+                 (tcp.th_flags & TH_SYN) ? 'S' : '.',
+                 (tcp.th_flags & TH_RST) ? 'R' : '.',
+                 (tcp.th_flags & TH_PUSH) ? 'P' : '.',
+                 (tcp.th_flags & TH_ACK) ? 'A' : '.',
+                 (tcp.th_flags & TH_URG) ? 'U' : '.',
+                 (computed_sum == tcp_sum));
 
-    } else if (ic->proto==IPPROTO_UDP) {
+    } else if (ic->proto == IPPROTO_UDP) {
         struct udphdr udp;
 
         memcpy(&udp, packet, sizeof(udp));
@@ -931,16 +894,16 @@ static void gt_print_hdr (struct ip_common *ic, uint8_t *data)
         udp.uh_ulen = ntohs(udp.uh_ulen);
 
         gt_print("proto:%hhu\tsrc:%s.%u\tdst:%s.%u\tsize:%u\n",
-                ic->proto, ip_src, udp.uh_sport, ip_dst, udp.uh_dport, udp.uh_ulen-8);
+                 ic->proto, ip_src, udp.uh_sport, ip_dst, udp.uh_dport, udp.uh_ulen - 8);
     } else {
         gt_print("proto:%hhu\tsrc:%s\tdst:%s\tsize:%hu\n",
-                ic->proto, ip_src, ip_dst, ic->size);
+                 ic->proto, ip_src, ip_dst, ic->size);
     }
 }
 
 static int gt_track (uint8_t **db, struct ip_common *ic, uint8_t *data, int rev)
 {
-    if (ic->proto!=IPPROTO_TCP && ic->proto!=IPPROTO_MPTCP)
+    if (ic->proto != IPPROTO_TCP && ic->proto != IPPROTO_MPTCP)
         return 0;
 
     if (!ic->hdr_size)
@@ -961,7 +924,7 @@ static int gt_track (uint8_t **db, struct ip_common *ic, uint8_t *data, int rev)
 
     struct tcp_entry *r_entry = (void *)db_search(db, entry.key);
 
-    if (tcp.th_flags&(TH_FIN|TH_RST)) {
+    if (tcp.th_flags & (TH_FIN | TH_RST)) {
         if (r_entry) {
             gt_print_entry(r_entry);
             db_remove(db, entry.key);
@@ -970,7 +933,7 @@ static int gt_track (uint8_t **db, struct ip_common *ic, uint8_t *data, int rev)
         return 0;
     }
 
-    if (tcp.th_flags&TH_ACK) {
+    if (tcp.th_flags & TH_ACK) {
         if (!r_entry) {
             r_entry = calloc(1, sizeof(entry));
 
@@ -986,17 +949,17 @@ static int gt_track (uint8_t **db, struct ip_common *ic, uint8_t *data, int rev)
 
             gt_print_entry(r_entry);
 
-            r_entry->data[1-rev].sa.base = tcp.th_ack;
+            r_entry->data[1 - rev].sa.base = tcp.th_ack;
             r_entry->data[rev].sa.base = tcp.th_seq;
         } else {
-            sa_rebase(&r_entry->data[1-rev].sa, tcp.th_ack);
+            sa_rebase(&r_entry->data[1 - rev].sa, tcp.th_ack);
         }
     }
 
     if (!r_entry)
         return 0;
 
-    uint32_t size = ic->size-ic->hdr_size-tcp.th_off*4;
+    uint32_t size = ic->size - ic->hdr_size - tcp.th_off * 4;
 
     if (!size)
         return 0;
@@ -1015,15 +978,15 @@ static unsigned long long gt_now (void)
 #if defined __APPLE__
     static mach_timebase_info_data_t mtid;
     if (!mtid.denom) mach_timebase_info(&mtid);
-    return (mach_absolute_time()*mtid.numer/mtid.denom)/1000ULL;
+    return (mach_absolute_time() * mtid.numer / mtid.denom) / 1000ULL;
 #elif defined CLOCK_MONOTONIC
     struct timespec tv;
     clock_gettime(CLOCK_MONOTONIC, &tv);
-    return tv.tv_sec*1000000ULL+tv.tv_nsec/1000ULL;
+    return tv.tv_sec * 1000000ULL + tv.tv_nsec / 1000ULL;
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return tv.tv_sec*1000000ULL+tv.tv_usec;
+    return tv.tv_sec * 1000000ULL + tv.tv_usec;
 #endif
 }
 
@@ -1040,13 +1003,13 @@ static void gt_bench (int chacha)
     if (!chacha)
         crypto_aead_aes256gcm_beforenm(&ctx, key);
 
-    gt_print("bench: %s\n", chacha?"chacha20poly1305":"aes256gcm");
+    gt_print("bench: %s\n", chacha ? "chacha20poly1305" : "aes256gcm");
 
-    _align_(16) unsigned char buf[32*1024+crypto_aead_aes256gcm_ABYTES];
+    _align_(16) unsigned char buf[32 * 1024 + crypto_aead_aes256gcm_ABYTES];
 
     size_t bs = 8;
 
-    while (!gt.quit && bs<=sizeof(buf)) {
+    while (!gt.quit && bs <= sizeof(buf)) {
         size_t total_size = 0;
         unsigned long long total_dt = 0.0;
         double mbps = 0.0;
@@ -1056,7 +1019,7 @@ static void gt_bench (int chacha)
 
             size_t size = 0;
 
-            while (!gt.quit && size<16*1024*1024) {
+            while (!gt.quit && size < 16 * 1024 * 1024) {
                 if (chacha) {
                     crypto_aead_chacha20poly1305_encrypt(buf, NULL,
                             buf, bs, NULL, 0, NULL, npub, key);
@@ -1068,15 +1031,15 @@ static void gt_bench (int chacha)
                 size += bs;
             }
 
-            total_dt += gt_now()-now;
+            total_dt += gt_now() - now;
             total_size += size;
 
             double last_mbps = mbps;
-            mbps = total_size*8.0/total_dt;
+            mbps = total_size * 8.0 / total_dt;
 
-            double diff = mbps-last_mbps;
+            double diff = mbps - last_mbps;
 
-            if (-0.1<diff && diff<0.1)
+            if (-0.1 < diff && diff < 0.1)
                 break;
         }
 
@@ -1090,7 +1053,7 @@ static int gt_setup_secretkey (struct crypto_ctx *ctx, char *keyfile)
     const size_t size = sizeof(ctx->skey);
 
     if (str_empty(keyfile)) {
-        char buf[2*size+1];
+        char buf[2 * size + 1];
 
         randombytes_buf(ctx->skey, size);
         gt_tohex(buf, sizeof(buf), ctx->skey, size);
@@ -1102,20 +1065,20 @@ static int gt_setup_secretkey (struct crypto_ctx *ctx, char *keyfile)
     int fd;
 
     do {
-        fd = open(keyfile, O_RDONLY|O_CLOEXEC);
-    } while (fd==-1 && errno==EINTR);
+        fd = open(keyfile, O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
 
-    if (fd==-1) {
+    if (fd == -1) {
         perror("open keyfile");
         return -1;
     }
 
-    char key[2*size];
+    char key[2 * size];
     size_t r = fd_read_all(fd, key, sizeof(key));
 
     close(fd);
 
-    if (r!=sizeof(key)) {
+    if (r != sizeof(key)) {
         gt_log("unable to read secret key\n");
         return -1;
     }
@@ -1152,48 +1115,48 @@ static int gt_setup_crypto (struct crypto_ctx *ctx, int fd, int listener)
     randombytes_buf(secret, sizeof(secret));
     crypto_scalarmult_base(data_w, secret);
 
-    memcpy(&data_w[size-hash_size-sizeof(proto)], proto, sizeof(proto));
+    memcpy(&data_w[size - hash_size - sizeof(proto)], proto, sizeof(proto));
 
-    crypto_generichash(&data_w[size-hash_size], hash_size,
-            data_w, size-hash_size, ctx->skey, sizeof(ctx->skey));
+    crypto_generichash(&data_w[size - hash_size], hash_size,
+            data_w, size - hash_size, ctx->skey, sizeof(ctx->skey));
 
-    if (!listener && fd_write_all(fd, data_w, size)!=size)
+    if (!listener && fd_write_all(fd, data_w, size) != size)
         return -1;
 
-    if (fd_read_all(fd, data_r, size)!=size)
+    if (fd_read_all(fd, data_r, size) != size)
         return -1;
 
-    if (memcmp(&data_r[size-hash_size-sizeof(proto)], proto, 3)) {
-        gt_log("bad packet [%02"PRIX8"%02"PRIX8"%02"PRIX8"] !\n",
-            &data_r[size-hash_size-sizeof(proto)+0],
-            &data_r[size-hash_size-sizeof(proto)+1],
-            &data_r[size-hash_size-sizeof(proto)+2]);
+    if (memcmp(&data_r[size - hash_size - sizeof(proto)], proto, 3)) {
+        gt_log("bad packet [%02" PRIX8 "%02" PRIX8 "%02" PRIX8 "] !\n",
+               &data_r[size - hash_size - sizeof(proto) + 0],
+               &data_r[size - hash_size - sizeof(proto) + 1],
+               &data_r[size - hash_size - sizeof(proto) + 2]);
         return -2;
     }
 
-    if (data_r[size-hash_size-sizeof(proto)+3] && !ctx->chacha) {
+    if (data_r[size - hash_size - sizeof(proto) + 3] && !ctx->chacha) {
         gt_log("peer wants chacha20\n");
         ctx->chacha = 1;
     }
 
     crypto_generichash(hash, hash_size,
-            data_r, size-hash_size, ctx->skey, sizeof(ctx->skey));
+            data_r, size - hash_size, ctx->skey, sizeof(ctx->skey));
 
-    if (sodium_memcmp(&data_r[size-hash_size], hash, hash_size)) {
+    if (sodium_memcmp(&data_r[size - hash_size], hash, hash_size)) {
         gt_log("peer sends a bad hash!\n");
         return -2;
     }
 
-    if (listener && fd_write_all(fd, data_w, size)!=size)
+    if (listener && fd_write_all(fd, data_w, size) != size)
         return -1;
 
     crypto_generichash(auth_w, hash_size,
             data_r, size, ctx->skey, sizeof(ctx->skey));
 
-    if (fd_write_all(fd, auth_w, hash_size)!=hash_size)
+    if (fd_write_all(fd, auth_w, hash_size) != hash_size)
         return -1;
 
-    if (fd_read_all(fd, auth_r, hash_size)!=hash_size)
+    if (fd_read_all(fd, auth_r, hash_size) != hash_size)
         return -1;
 
     crypto_generichash(hash, hash_size,
@@ -1302,358 +1265,4 @@ int main (int argc, char **argv)
         { NULL },
     };
 
-    if (option(opts, argc, argv))
-        return 1;
-
-    if (option_is_set(opts, "version")) {
-        gt_print(PACKAGE_STRING"\n");
-        return 0;
-    }
-
-    const int listener = option_is_set(opts, "listener");
-    const int delay = option_is_set(opts, "delay");
-    const int keepalive = option_is_set(opts, "keepalive");
-    const int noquickack = option_is_set(opts, "noquickack");
-    const int debug = option_is_set(opts, "debug");
-
-    int chacha = option_is_set(opts, "chacha20");
-
-    gt.mptcp = option_is_set(opts, "mptcp");
-
-    if (sodium_init()==-1) {
-        gt_log("libsodium initialization has failed\n");
-        return 1;
-    }
-
-    if (!chacha && !crypto_aead_aes256gcm_is_available()) {
-        gt_na("AES-256-GCM");
-        chacha = 1;
-    }
-
-    if (option_is_set(opts, "bench")) {
-        gt_bench(chacha);
-        return 0;
-    }
-
-    if (buffer_size < GT_PKT_MAX) {
-        buffer_size = GT_PKT_MAX;
-        gt_log("buffer size must be greater than or equal to %li\n", buffer_size);
-    }
-
-    if (!listener) {
-        if (!option_is_set(opts, "keyfile")) {
-            gt_log("keyfile option must be set\n");
-            return 1;
-        }
-
-        if (!option_is_set(opts, "retry"))
-            retry_count = 0;
-    }
-
-    if (gt.timeout<=0 || gt.timeout>INT_MAX) {
-        gt_log("bad timeout\n");
-        return 1;
-    }
-
-    struct addrinfo *ai = ai_create(host, port, listener);
-
-    if (!ai)
-        return 1;
-
-    gt.state_fd = state_create(statefile);
-
-    if (statefile && gt.state_fd==-1)
-        return 1;
-
-    struct fdbuf tun  = { .fd = -1 };
-    struct fdbuf sock = { .fd = -1 };
-
-    char *tun_name = NULL;
-
-    tun.fd = tun_create(dev, &tun_name, option_is_set(opts, "multiqueue"));
-
-    if (tun.fd==-1) {
-        gt_log("couldn't create tun device\n");
-        return 1;
-    }
-
-    fd_set_nonblock(tun.fd);
-
-    buffer_setup(&tun.write, NULL, GT_TUNW_SIZE);
-    buffer_setup(&tun.read,  NULL, GT_TUNR_SIZE);
-
-    buffer_setup(&sock.write, NULL, buffer_size);
-    buffer_setup(&sock.read,  NULL, buffer_size);
-
-    int fd = -1;
-    if (gt.mptcp)
-        ai->ai_protocol = IPPROTO_MPTCP;
-
-    if (listener) {
-        fd = sk_create(ai, sk_listen);
-
-        if (fd==-1)
-            return 1;
-    }
-
-    struct crypto_ctx ctx;
-
-    if (gt_setup_secretkey(&ctx, keyfile))
-        return 1;
-
-    long retry = 0;
-    uint8_t *db = NULL;
-
-    state_send(gt.state_fd, "INITIALIZED", tun_name);
-
-    while (!gt.quit) {
-        if (retry_count>=0 && retry>=retry_count+1) {
-            gt_log("couldn't %s (%d attempt%s)\n", listener?"listen":"connect",
-                   (int)retry, (retry>1)?"s":"");
-            break;
-        }
-
-        if (retry_slope || retry_const) {
-            long usec = retry*retry_slope+retry_const;
-
-            if (usec>retry_limit)
-                usec = retry_limit;
-
-            if (usec>0 && usleep(usec)==-1 && errno==EINVAL)
-                sleep(usec/1000000);
-        }
-
-        if (retry<LONG_MAX)
-            retry++;
-
-        sock.fd = listener?sk_accept(fd):sk_create(ai, sk_connect);
-
-        if (sock.fd==-1)
-            continue;
-
-        char *sockname = sk_get_name(sock.fd);
-
-        if (str_empty(sockname)) {
-            close(sock.fd);
-            continue;
-        }
-
-        gt_log("%s: connected\n", sockname);
-
-        sk_set_int(sock.fd, sk_nodelay, !delay);
-        sk_set_int(sock.fd, sk_keepalive, keepalive);
-
-        if (keepalive) {
-            if (ka_count>=0 && ka_count<=INT_MAX)
-                sk_set_int(sock.fd, sk_keepcnt, ka_count);
-
-            if (ka_idle>=0 && ka_idle<=INT_MAX)
-                sk_set_int(sock.fd, sk_keepidle, ka_idle);
-
-            if (ka_interval>=0 && ka_interval<=INT_MAX)
-                sk_set_int(sock.fd, sk_keepintvl, ka_interval);
-        }
-
-        sk_set_int(sock.fd, sk_user_timeout, gt.timeout);
-        sk_set(sock.fd, sk_congestion, congestion, str_len(congestion));
-
-        ctx.chacha = chacha;
-
-        if (gt_setup_crypto(&ctx, sock.fd, listener)) {
-            gt_log("%s: key exchange failed\n", sockname);
-            goto restart;
-        }
-
-        retry = 0;
-
-        state_send(gt.state_fd, "STARTED", tun_name);
-
-        fd_set rfds;
-        FD_ZERO(&rfds);
-
-        int stop_loop = 0;
-
-        buffer_format(&sock.write);
-        buffer_format(&sock.read);
-
-        while (1) {
-            if _0_(gt.quit)
-                stop_loop |= 1;
-
-            if _0_(stop_loop) {
-                if (((stop_loop&(1<<2)) || !buffer_read_size(&sock.write)) &&
-                    ((stop_loop&(1<<1)) || !buffer_read_size(&sock.read)))
-                    goto restart;
-                FD_CLR(tun.fd, &rfds);
-            } else {
-                buffer_shift(&tun.read);
-
-                if (buffer_write_size(&tun.read)>=GT_MTU_MAX) {
-                    FD_SET(tun.fd, &rfds);
-                } else {
-                    FD_CLR(tun.fd, &rfds);
-                }
-            }
-
-            buffer_shift(&sock.read);
-
-            if (buffer_write_size(&sock.read)) {
-                FD_SET(sock.fd, &rfds);
-            } else {
-                FD_CLR(sock.fd, &rfds);
-            }
-
-            struct timeval timeout = {
-                .tv_usec = 100000,
-            };
-
-            if (buffer_read_size(&sock.write))
-                timeout.tv_usec = 1000;
-
-            if _0_(select(sock.fd+1, &rfds, NULL, NULL, &timeout)==-1) {
-                if (errno==EINTR)
-                    continue;
-                perror("select");
-                return 1;
-            }
-
-         // TODO
-         // struct timeval now;
-         // gettimeofday(&now, NULL);
-
-            if (FD_ISSET(tun.fd, &rfds)) {
-                while (1) {
-                    const size_t size = buffer_write_size(&tun.read);
-
-                    if (size<GT_MTU_MAX)
-                        break;
-
-                    const ssize_t r = tun_read(tun.fd, tun.read.write, GT_MTU_MAX);
-
-                    if (r<=0) {
-                        gt.quit |= !r;
-                        break;
-                    }
-
-                    struct ip_common ic;
-
-                    if (ip_get_common(&ic, tun.read.write, GT_MTU_MAX))
-                        continue;
-
-                    if _0_(ic.size!=r) {
-                        char tmp[2*GT_MTU_MAX+1];
-                        gt_tohex(tmp, sizeof(tmp), tun.read.write, r);
-                        gt_log("%s: DUMP %zi %s\n", sockname, r, tmp);
-                        continue;
-                    }
-
-                    if _0_(debug) {
-                        if (gt_track(&db, &ic, tun.read.write, 0))
-                            continue;
-                    }
-
-                    tun.read.write += r;
-                }
-            }
-
-            buffer_shift(&sock.write);
-
-            if _1_(!stop_loop)
-                gt_encrypt(&ctx, &sock.write, &tun.read);
-
-            if (buffer_read_size(&sock.write)) {
-                const ssize_t r = fd_write(sock.fd, sock.write.read,
-                                           buffer_read_size(&sock.write));
-
-                if (r>0) {
-                    sock.write.read += r;
-                } else if (!r) {
-                    stop_loop |= (1<<2);
-                }
-            }
-
-            if _0_(stop_loop && !buffer_read_size(&sock.write)) {
-                if (!(stop_loop&(1<<2))) {
-                    stop_loop |= (1<<2);
-                    shutdown(sock.fd, SHUT_WR);
-                    gt_log("%s: shutdown\n", sockname);
-                }
-            }
-
-            if (FD_ISSET(sock.fd, &rfds)) {
-                if (noquickack)
-                    sk_set_int(sock.fd, sk_quickack, 0);
-
-                const ssize_t r = fd_read(sock.fd, sock.read.write,
-                                          buffer_write_size(&sock.read));
-
-                if (r>0) {
-                    sock.read.write += r;
-                } else if (!r) {
-                    stop_loop |= (1<<1);
-                }
-            }
-
-            buffer_shift(&tun.write);
-
-            if _0_(gt_decrypt(&ctx, &tun.write, &sock.read)) {
-                gt_log("%s: message could not be verified!\n", sockname);
-                goto restart;
-            }
-
-            while (1) {
-                size_t size = buffer_read_size(&tun.write);
-
-                if (!size)
-                    break;
-
-                struct ip_common ic;
-
-                if (ip_get_common(&ic, tun.write.read, size) || ic.size>size) {
-                    gt_log("%s: bad packet!\n", sockname);
-                    goto restart;
-                }
-
-                if _0_(debug) {
-                    if (gt_track(&db, &ic, tun.write.read, 1)) {
-                        tun.write.read += ic.size;
-                        continue;
-                    }
-                }
-
-                ssize_t r = tun_write(tun.fd, tun.write.read, ic.size);
-
-                if (r>0) {
-                    if (r==ic.size)
-                        tun.write.read += r;
-                } else {
-                    gt.quit |= !r;
-                    break;
-                }
-            }
-        }
-
-    restart:
-        if (sock.fd!=-1) {
-            close(sock.fd);
-            sock.fd = -1;
-        }
-
-        state_send(gt.state_fd, "STOPPED", tun_name);
-
-        if (sockname) {
-            free(sockname);
-            sockname = NULL;
-        }
-    }
-
-    freeaddrinfo(ai);
-
-    free(sock.write.data);
-    free(sock.read.data);
-
-    free(tun.write.data);
-    free(tun.read.data);
-
-    return 0;
-}
+    if (option(opts, argc,
